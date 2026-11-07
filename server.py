@@ -6,6 +6,7 @@ Run: python server.py --host 0.0.0.0 --port 9999
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import socket
 import threading
@@ -28,7 +29,8 @@ class Peer:
 class GameServer:
     def __init__(self, host: str, port: int, loss: float = 0.0, delay_ms: int = 0):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 46 << 2)
+        if os.getenv("GAME_DSCP") == "46":
+            self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 46 << 2)
         self.sock.bind((host, port))
         self.experiment = NetworkExperiment(loss, delay_ms)
         self.peers: dict[tuple[str, int], Peer] = {}

@@ -7,6 +7,7 @@ Run spectator: python client.py --name Viewer --spectator
 from __future__ import annotations
 
 import argparse
+import os
 import queue
 import socket
 import threading
@@ -54,7 +55,8 @@ class Client:
         self.name = name
         self.requested_role = "spectator" if spectator else "player"
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 46 << 2)
+        if os.getenv("GAME_DSCP") == "46":
+            self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 46 << 2)
         self.sock.settimeout(0.2)
         self.seq = 0
         self.pending: dict[int, tuple[dict, float]] = {}
