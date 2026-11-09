@@ -80,20 +80,13 @@ class TugOfWarController(app_manager.OSKenApp):
         actions.append(parser.OFPActionOutput(out_port))
 
         if out_port != ofp.OFPP_FLOOD:
-            if is_game:
-                match = parser.OFPMatch(
-                    in_port=in_port,
-                    eth_src=src,
-                    eth_dst=dst,
-                    eth_type=0x0800,
-                    ip_dscp=46,
-                )
-            else:
-                match = parser.OFPMatch(
-                    in_port=in_port,
-                    eth_src=src,
-                    eth_dst=dst,
-                )
+            # Match DSCP for ALL IPv4 flows so a default flow cannot
+            # shadow a later high-priority game flow for the same MACs.
+            fields = dict(in_port=in_port, eth_src=src, eth_dst=dst,
+                          eth_type=eth.ethertype)
+            if ip_pkt is not None:
+                fields["ip_dscp"] = ip_pkt.tos >> 2
+            match = parser.OFPMatch(**fields)
             self.add_flow(datapath, 10, match, actions, msg.buffer_id)
 
         if msg.buffer_id == ofp.OFP_NO_BUFFER:

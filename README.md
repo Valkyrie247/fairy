@@ -7,7 +7,7 @@
 - h3 (10.0.0.3): authoritative Tug-of-War game server
 - h4 (10.0.0.4): background traffic generator
 - s1 and s2: Open vSwitch switches
-- s1--s2: shared bottleneck; QoS is configured on `s1-eth3` and `s2-eth3`
+- s1--s2: shared bottleneck; QoS is configured on `s1-eth4` and `s2-eth2`
 - Controller: OS-Ken / OpenFlow 1.3 on 127.0.0.1:6653
 
 The controller learns MAC addresses and forwards traffic. IPv4 packets with
@@ -55,27 +55,11 @@ Make shell scripts executable:
 chmod +x configure_qos.sh traffic_test.sh
 ```
 
-## 3. Mark game UDP packets as DSCP 46
+## 3. Optional DSCP game packet marking
 
-Do this in **both** the existing client and server code, immediately after
-each UDP socket is created.
-
-Add `import os` with the other imports, then after `socket.socket(...)` add:
-
-```python
-if os.getenv("GAME_DSCP") == "46":
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 46 << 2)
-```
-
-Use the actual socket variable name in each file (`self.sock` in the client
-or `self.sock`/`self.socket` in the server). The `46 << 2` value sets the
-DSCP field to 46 (Expedited Forwarding).
-
-The environment variable makes it possible to compare:
-- Baseline: do not set `GAME_DSCP`
-- Priority: set `GAME_DSCP=46`
-
-If your socket variable has a different name, apply the option to that socket.
+The game client and server already read the `GAME_DSCP` environment variable.
+Set `GAME_DSCP=46` for the prioritized run; leave it unset for baseline.
+No manual code edits are required.
 
 ## 4. Start the controller
 
@@ -114,8 +98,8 @@ At the Mininet prompt:
 
 ```text
 mininet> sh ./configure_qos.sh priority
-mininet> sh ovs-vsctl list Port s1-eth3
-mininet> sh ovs-vsctl list Port s2-eth3
+mininet> sh ovs-vsctl list Port s1-eth4
+mininet> sh ovs-vsctl list Port s2-eth2
 ```
 
 For the baseline run, use:
@@ -126,30 +110,36 @@ mininet> sh ./configure_qos.sh baseline
 
 ## 7. Start the game
 
-At the Mininet prompt, start the server on h3:
+At the Mininet prompt, start the server on h3 (the command runs in the foreground):
 
 ```text
-mininet> h3 python3 server.py --host 10.0.0.3 --port 9999
+mininet> h3 python3 server.py --host 10.0.0.3 --port 9999 &
 ```
 
-If your server uses different CLI arguments, use the arguments documented
-inside your existing `server.py`.
+For the **priority** run, start it with DSCP marking instead:
 
-In separate Ubuntu terminals, open Mininet CLI sessions to run the clients:
+```text
+mininet> h3 env GAME_DSCP=46 python3 server.py --host 10.0.0.3 --port 9999 &
+```
+
+Stop the previous server before switching modes (e.g. `h3 pkill -f 'python3 server.py'` in the Mininet CLI).
+
+To open graphical Pygame clients (requires a working X11 display), use:
 
 ```text
 mininet> xterm h1 h2
 ```
 
-If xterm is unavailable, use the Mininet host command from separate terminal
-sessions or run the clients from the Mininet CLI in the background:
+In the two host terminals, run each client with these **priority-mode** commands:
 
 ```text
-mininet> h1 env GAME_DSCP=46 python3 client.py --host 10.0.0.3 --port 9999 --name Alice
-mininet> h2 env GAME_DSCP=46 python3 client.py --host 10.0.0.3 --port 9999 --name Bob
+h1: env GAME_DSCP=46 python3 client.py --host 10.0.0.3 --port 9999 --name Alice
+h2: env GAME_DSCP=46 python3 client.py --host 10.0.0.3 --port 9999 --name Bob
 ```
 
-Use `GAME_DSCP=46` only for the prioritised run. Omit it for baseline.
+For **baseline**, use the same server/client commands without `env GAME_DSCP=46`.
+Use `GAME_DSCP=46` only for the prioritised run (including the server).
+Restart the server and clients between runs so they use the intended DSCP setting.
 The exact client arguments should match your existing `client.py --help`.
 
 ## 8. Generate competing background traffic
@@ -163,12 +153,16 @@ mininet> h3 iperf3 -s -p 5201 > /tmp/iperf-server.log 2>&1 &
 Then generate UDP traffic from h4 to h3:
 
 ```text
-mininet> h4 iperf3 -c 10.0.0.3 -u -b 8M -t 30 -p 5201
+mininet> h4 bash traffic_test.sh 30 /tmp/fairy-priority.json
 ```
 
-The offered load (8 Mbps) is greater than the configured 5 Mbps bottleneck,
-so it creates contention. Run the same test once in baseline mode and once
-in priority mode.
+The offered load (8 Mbps) is greater than the 5 Mbps bottleneck in **both**
+baseline and priority modes, so the comparison uses the same congestion level.
+For baseline, run `h4 bash traffic_test.sh 30 /tmp/fairy-baseline.json`.
+Run each mode three times, keeping the test duration and game input frequency
+similar. Watch client RTT and pending counts; the iperf3 JSON output contains
+background traffic receiver jitter, loss and throughput. Game RTT/pending are
+visible in the client UI but not automatically exported to CSV.
 
 ## 9. Measurements to record
 
@@ -177,7 +171,7 @@ For each mode, run at least three trials and record:
 | Metric | How to obtain it |
 |---|---|
 | Game RTT | Existing client's ping/RTT display |
-| Game jitter | Variation between consecutive game RTT samples; calculate mean absolute difference |
+| Game jitter | Variation between consecutive game RTT samples; manual calculation is needed (client does not export samples) |
 | Background UDP loss | `iperf3` receiver output |
 | Background jitter | `iperf3` receiver output |
 | Throughput | `iperf3` receiver bitrate |
@@ -209,8 +203,8 @@ Stop the controller with Ctrl+C in Terminal 1.
 
 ## Important notes
 
-1. The controller expects game IPv4 packets to carry DSCP 46. Without the
-   socket marking change, the controller will treat them as ordinary traffic.
+1. The controller expects game IPv4 packets to carry DSCP 46. Enable it on
+   both the client and the server with `GAME_DSCP=46` in priority mode.
 2. Queue configuration is attached to both ends of the inter-switch link so
    player-to-server and server-to-player traffic can be shaped.
 3. `iperf3` traffic uses port 5201, while the game uses UDP port 9999.
